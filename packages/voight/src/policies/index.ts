@@ -14,6 +14,7 @@ import {
     tenantScopingPolicy,
     type TenantScopingPolicyOptions,
     type TenantScopingScopeOptions,
+    type TenantScopeValueType,
 } from "./tenant-scoping";
 
 export type {
@@ -29,6 +30,7 @@ export type {
     MaxLimitPolicyOptions,
     TenantScopingPolicyOptions,
     TenantScopingScopeOptions,
+    TenantScopeValueType,
 };
 
 export {

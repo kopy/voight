@@ -211,6 +211,78 @@ describe("project_id isolation against mixed-project rows", () => {
         expectNoVictimProjectIds(rows);
     });
 
+    test("function-argument scalar subqueries cannot leak victim project ids", () => {
+        const { rows } = executeScoped(
+            `SELECT COALESCE((
+                SELECT victim.project_id
+                FROM events AS victim
+                WHERE victim.project_id = '${VICTIM_PROJECT_ID}'
+                LIMIT 1
+             ), 'none') AS leaked_project_id
+             FROM events AS e
+             ORDER BY e.id
+             LIMIT 1`,
+        );
+
+        expect(rows).toEqual([{ leaked_project_id: "none" }]);
+        expectNoVictimProjectIds(rows);
+    });
+
+    test("EXISTS projection subqueries cannot reveal victim project existence", () => {
+        const { rows } = executeScoped(
+            `SELECT EXISTS (
+                SELECT 1
+                FROM events AS victim
+                WHERE victim.project_id = '${VICTIM_PROJECT_ID}'
+             ) AS has_victim_project
+             FROM events AS e
+             ORDER BY e.id
+             LIMIT 1`,
+        );
+
+        expect(rows).toEqual([{ has_victim_project: 0 }]);
+        expectNoVictimProjectIds(rows);
+    });
+
+    test("correlated aggregate subqueries cannot reveal victim metric distribution", () => {
+        const { rows } = executeScoped(
+            `SELECT e.metric,
+                    (
+                        SELECT COUNT(victim.id)
+                        FROM events AS victim
+                        WHERE victim.project_id = '${VICTIM_PROJECT_ID}'
+                          AND victim.metric = e.metric
+                    ) AS victim_metric_count
+             FROM events AS e
+             ORDER BY e.id
+             LIMIT 3`,
+        );
+
+        expect(rows).toEqual([
+            { metric: "login", victim_metric_count: 0 },
+            { metric: "export", victim_metric_count: 0 },
+            { metric: "login", victim_metric_count: 0 },
+        ]);
+        expectNoVictimProjectIds(rows);
+    });
+
+    test("HAVING subqueries cannot reveal victim project existence", () => {
+        const { rows } = executeScoped(
+            `SELECT metric, COUNT(id) AS event_count
+             FROM events
+             GROUP BY metric
+             HAVING (
+                SELECT COUNT(victim.id)
+                FROM events AS victim
+                WHERE victim.project_id = '${VICTIM_PROJECT_ID}'
+             ) > 0
+             ORDER BY metric`,
+        );
+
+        expect(rows).toEqual([]);
+        expectNoVictimProjectIds(rows);
+    });
+
     test("self joins scope every table touch independently", () => {
         const { result, rows } = executeScoped(
             `SELECT e.id, other.id AS other_id
@@ -225,6 +297,22 @@ describe("project_id isolation against mixed-project rows", () => {
         expect(result.emitted?.sql).toContain("`e`.`project_id` = 'project-alpha'");
         expect(result.emitted?.sql).toContain("`other`.`project_id` = 'project-alpha'");
         expect(rows).toEqual([]);
+        expectNoVictimProjectIds(rows);
+    });
+
+    test("cross joins scope the joined table even without an original ON clause", () => {
+        const { result, rows } = executeScoped(
+            `SELECT e.project_id, other.project_id AS other_project_id
+             FROM events AS e
+             CROSS JOIN events AS other
+             WHERE other.project_id = '${VICTIM_PROJECT_ID}' OR 1 = 1
+             ORDER BY e.id, other.id
+             LIMIT 10`,
+        );
+
+        expect(result.emitted?.sql).toContain("INNER JOIN `events` AS `other` ON TRUE");
+        expect(result.emitted?.sql).toContain("`other`.`project_id` = 'project-alpha'");
+        expect(result.emitted?.sql).toContain("`e`.`project_id` = 'project-alpha'");
         expectNoVictimProjectIds(rows);
     });
 

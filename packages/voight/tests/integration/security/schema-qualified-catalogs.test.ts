@@ -153,4 +153,36 @@ describe("schema-qualified catalogs", () => {
             expect(result.emitted?.sql).toContain("`public_stats`.`tenant_id` = 'tenant-123'");
         }
     });
+
+    test("scopes direct physical access when the schema-qualified table is protected by logical alias", () => {
+        const aliasCatalog = new AliasCatalog(catalog, [
+            createCatalogAlias({
+                from: ["public_stats"],
+                to: ["tracking", "time_series_stats"],
+            }),
+        ]);
+
+        const result = compileStrict(
+            "SELECT metric FROM tracking.time_series_stats WHERE tenant_id = 'tenant-999'",
+            {
+                catalog: aliasCatalog,
+                policies: [
+                    tenantScopingPolicy({
+                        tables: ["public_stats"],
+                        scopeColumn: "tenant_id",
+                        contextKey: "tenantId",
+                    }),
+                ],
+                policyContext: {
+                    tenantId: "tenant-123",
+                },
+            },
+        );
+
+        expect(result.ok).toBe(true);
+        if (result.ok) {
+            expect(result.emitted?.sql).toContain("FROM `tracking`.`time_series_stats` WHERE");
+            expect(result.emitted?.sql).toContain("`time_series_stats`.`tenant_id` = 'tenant-123'");
+        }
+    });
 });

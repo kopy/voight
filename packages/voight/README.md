@@ -137,6 +137,11 @@ Use `AliasCatalog` and `createCatalogAlias(...)` if your public logical table na
 - `allowedFunctionsPolicy(...)` allowlists function calls and `CURRENT_*` keywords.
 - `supportedOperatorsPolicy()` rejects operators outside the supported policy surface.
 
+`tenantScopingPolicy(...)` defaults scope values to strings. If the scoped column is numeric or
+boolean, set `scopeValueType` explicitly, for example `scopeValueType: "bigint"` for a
+`BIGINT project_id`. On MySQL, string scope columns should use binary or case-sensitive
+collation/comparison semantics so equivalent case/accent variants do not cross tenant boundaries.
+
 ## Repository
 
 The source repository lives at [github.com/lukaskratzel/voight](https://github.com/lukaskratzel/voight). The workspace README has more detail on the parser stack, development workflow, and release process.

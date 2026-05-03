@@ -11,6 +11,7 @@ export interface PolicyRewriteContext {
 
 export interface PolicyEnforcementContext {
     readonly context: PolicyContext;
+    readonly catalog?: Catalog;
 }
 
 export interface CompilerPolicy {

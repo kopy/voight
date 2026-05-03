@@ -178,6 +178,18 @@ describe("tenantScopingPolicy boundaries", () => {
         scopeColumn: "tenant_id",
         contextKey: "tenantId",
     });
+    const bigintPolicy = tenantScopingPolicy({
+        tables: ["timeseries"],
+        scopeColumn: "tenant_id",
+        contextKey: "tenantId",
+        scopeValueType: "bigint",
+    });
+    const numberPolicy = tenantScopingPolicy({
+        tables: ["timeseries"],
+        scopeColumn: "tenant_id",
+        contextKey: "tenantId",
+        scopeValueType: "number",
+    });
 
     test("enforcement rejects semantically equivalent but non-canonical tenant predicates", () => {
         // Enforcement is intentionally syntactic. This query is logically scoped, but
@@ -370,7 +382,7 @@ describe("tenantScopingPolicy boundaries", () => {
     test("rejects bigint tenant values at zero", () => {
         const result = compile("SELECT metric FROM timeseries", {
             catalog: createTestCatalog(),
-            policies: [policy],
+            policies: [bigintPolicy],
             policyContext: { tenantId: 0n },
             debug: true,
         });
@@ -385,7 +397,7 @@ describe("tenantScopingPolicy boundaries", () => {
     test("rejects negative bigint tenant values", () => {
         const result = compile("SELECT metric FROM timeseries", {
             catalog: createTestCatalog(),
-            policies: [policy],
+            policies: [bigintPolicy],
             policyContext: { tenantId: -1n },
             debug: true,
         });
@@ -400,7 +412,7 @@ describe("tenantScopingPolicy boundaries", () => {
     test("rejects bigint tenant values above uint64", () => {
         const result = compile("SELECT metric FROM timeseries", {
             catalog: createTestCatalog(),
-            policies: [policy],
+            policies: [bigintPolicy],
             policyContext: { tenantId: 18446744073709551616n },
             debug: true,
         });
@@ -415,7 +427,7 @@ describe("tenantScopingPolicy boundaries", () => {
     test("rejects unsafe integer number tenant values that should be bigint", () => {
         const result = compile("SELECT metric FROM timeseries", {
             catalog: createTestCatalog(),
-            policies: [policy],
+            policies: [numberPolicy],
             policyContext: { tenantId: Number.MAX_SAFE_INTEGER + 1 },
             debug: true,
         });
@@ -433,7 +445,7 @@ describe("tenantScopingPolicy boundaries", () => {
         for (const tenantId of cases) {
             const result = compile("SELECT metric FROM timeseries", {
                 catalog: createTestCatalog(),
-                policies: [policy],
+                policies: [numberPolicy],
                 policyContext: { tenantId },
                 debug: true,
             });

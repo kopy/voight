@@ -37,10 +37,13 @@ const TENANT_SCOPING_POLICY_NAME = "tenant-scoping";
 const MAX_UINT64 = (1n << 64n) - 1n;
 const MIN_POSITIVE_UINT64 = 1n;
 
+export type TenantScopeValueType = "string" | "number" | "bigint" | "boolean";
+
 export interface TenantScopingScopeOptions {
     readonly tables: readonly string[];
     readonly scopeColumn: string;
     readonly contextKey: string;
+    readonly scopeValueType?: TenantScopeValueType;
 }
 
 export type TenantScopingPolicyOptions =
@@ -57,6 +60,7 @@ interface TenantScopeRule {
     readonly tables: ReadonlySet<string>;
     readonly scopeColumn: string;
     readonly contextKey: string;
+    readonly scopeValueType: TenantScopeValueType;
 }
 
 interface TenantScopeMatch {
@@ -66,6 +70,24 @@ interface TenantScopeMatch {
     readonly canonicalName: string;
     readonly schemaQualified: boolean;
 }
+
+type NormalizedPolicyValue =
+    | {
+          readonly literalType: "string";
+          readonly value: string;
+      }
+    | {
+          readonly literalType: "integer" | "decimal";
+          readonly value: string;
+      }
+    | {
+          readonly literalType: "boolean";
+          readonly value: boolean;
+      }
+    | {
+          readonly literalType: "null";
+          readonly value: null;
+      };
 
 const POLICY_IDENTIFIER_SEGMENT_PATTERN = /^[a-z_][a-z0-9_$]*$/;
 
@@ -99,6 +121,7 @@ class TenantScopingPolicy implements CompilerPolicy {
                 this.#enforceSelect(
                     select,
                     resolveTenantScopeContextValues(this.#scopeRules, context.context, "enforce"),
+                    context.catalog,
                 ),
         });
     }
@@ -217,6 +240,7 @@ class TenantScopingPolicy implements CompilerPolicy {
                 scope.alias,
                 scope.rule.scopeColumn,
                 getTenantScopeContextValue(contextValues, scope.rule.contextKey),
+                scope.rule.scopeValueType,
                 scope.span,
             );
             return {
@@ -234,6 +258,7 @@ class TenantScopingPolicy implements CompilerPolicy {
                           fromScope.alias,
                           fromScope.rule.scopeColumn,
                           getTenantScopeContextValue(contextValues, fromScope.rule.contextKey),
+                          fromScope.rule.scopeValueType,
                           fromScope.span,
                       ),
                   ])
@@ -241,6 +266,7 @@ class TenantScopingPolicy implements CompilerPolicy {
                       fromScope.alias,
                       fromScope.rule.scopeColumn,
                       getTenantScopeContextValue(contextValues, fromScope.rule.contextKey),
+                      fromScope.rule.scopeValueType,
                       fromScope.span,
                   )
             : rewritten.where;
@@ -256,11 +282,12 @@ class TenantScopingPolicy implements CompilerPolicy {
     #enforceSelect(
         select: BoundSelectStatement,
         contextValues: ReadonlyMap<string, unknown>,
+        catalog: Catalog | undefined,
     ): readonly Diagnostic[] {
         const diagnostics: Diagnostic[] = [];
 
         for (const table of select.scope.tables.values()) {
-            const classification = this.#classifyBoundTable(table);
+            const classification = this.#classifyBoundTable(table, catalog);
             if (!classification.matched) {
                 continue;
             }
@@ -309,6 +336,7 @@ class TenantScopingPolicy implements CompilerPolicy {
 
             const expectedLiteral = normalizePolicyValue(
                 getTenantScopeContextValue(contextValues, classification.rule.contextKey),
+                classification.rule.scopeValueType,
             );
 
             const guardExpression =
@@ -589,6 +617,28 @@ class TenantScopingPolicy implements CompilerPolicy {
         const originalName = normalizeIdentifier(
             table.name.parts[table.name.parts.length - 1]?.name ?? "",
         );
+        const aliasName = normalizeIdentifier(table.alias?.name ?? originalName);
+        if (originalPath.length === 1 && visibleCtes.has(originalName)) {
+            const shadowedName = findScopedTableName(
+                [originalName, aliasName],
+                this.#scopeRules,
+                catalog,
+            );
+            if (shadowedName) {
+                throw new PolicyDiagnosticError(
+                    createDiagnostic({
+                        code: DiagnosticCode.PolicyViolation,
+                        stage: CompilerStage.Rewriter,
+                        message: `Policy "${this.name}" rejects CTE shadowing for scoped table "${shadowedName}".`,
+                        primarySpan: table.span,
+                        visibility: DiagnosticVisibility.PublicRedacted,
+                        publicMessage: "Query violates tenant scoping requirements.",
+                    }),
+                    { policyName: this.name },
+                );
+            }
+        }
+
         const match = collectTenantScopeMatchFromAst(table, catalog, this.#scopeRules);
         const matchedRules = dedupeTenantScopeRules([...match.exactRules, ...match.shortRules]);
         const matchedRule = match.exactRules[0];
@@ -609,28 +659,17 @@ class TenantScopingPolicy implements CompilerPolicy {
 
         this.#assertUnambiguousScopeMatch(matchedRules, table.span, match.names);
 
-        if (originalPath.length === 1 && visibleCtes.has(originalName)) {
-            throw new PolicyDiagnosticError(
-                createDiagnostic({
-                    code: DiagnosticCode.PolicyViolation,
-                    stage: CompilerStage.Rewriter,
-                    message: `Policy "${this.name}" rejects CTE shadowing for scoped table "${originalName}".`,
-                    primarySpan: table.span,
-                    visibility: DiagnosticVisibility.PublicRedacted,
-                    publicMessage: "Query violates tenant scoping requirements.",
-                }),
-                { policyName: this.name },
-            );
-        }
-
         return {
-            alias: normalizeIdentifier(table.alias?.name ?? originalName),
+            alias: aliasName,
             span: table.span,
             rule: matchedRule,
         };
     }
 
-    #classifyBoundTable(table: BoundTableReference):
+    #classifyBoundTable(
+        table: BoundTableReference,
+        catalog: Catalog | undefined,
+    ):
         | { matched: false; shadowed: false }
         | {
               matched: true;
@@ -640,7 +679,7 @@ class TenantScopingPolicy implements CompilerPolicy {
               ambiguous?: readonly string[];
               requiresQualifiedName?: boolean;
           } {
-        const match = collectTenantScopeMatchFromBound(table, this.#scopeRules);
+        const match = collectTenantScopeMatchFromBound(table, this.#scopeRules, catalog);
         const matchedRules = dedupeTenantScopeRules([...match.exactRules, ...match.shortRules]);
         const matchedRule = match.exactRules[0];
         if (!matchedRule) {
@@ -666,7 +705,9 @@ class TenantScopingPolicy implements CompilerPolicy {
             };
         }
 
-        const matchedName = match.names.find((name) => matchedRule.tables.has(name));
+        const matchedName = match.names.find((name) =>
+            tenantScopeRuleMatchesName(matchedRule, name, catalog, "exact"),
+        );
 
         return {
             matched: true,
@@ -701,10 +742,12 @@ function createTenantPredicate(
     alias: string,
     column: string,
     value: unknown,
+    scopeValueType: TenantScopeValueType,
     span: SourceSpan,
 ): ExpressionNode {
     const left = createQualifiedReference(alias, column, span);
-    if (value === null) {
+    const normalized = normalizePolicyValue(value, scopeValueType);
+    if (normalized.value === null) {
         return {
             kind: "IsNullExpression",
             span: left.span,
@@ -713,7 +756,7 @@ function createTenantPredicate(
         } satisfies IsNullExpressionNode;
     }
 
-    const right = createPolicyValueExpression(value, span);
+    const right = createPolicyValueExpression(normalized, span);
     return {
         kind: "BinaryExpression",
         span: mergeSpans(left.span, right.span),
@@ -768,72 +811,22 @@ function createIdentifier(name: string, span: SourceSpan): IdentifierNode {
     } as IdentifierNode);
 }
 
-function createPolicyValueExpression(value: unknown, span: SourceSpan): LiteralNode {
-    if (
-        typeof value === "string" ||
-        typeof value === "boolean" ||
-        value === null ||
-        typeof value === "number" ||
-        typeof value === "bigint"
-    ) {
-        return createLiteral(value, span);
-    }
-
-    throw new PolicyUsageError(
-        'Policy "tenant-scoping" only supports string, number, bigint, boolean, or null tenant values.',
-        { policyName: "tenant-scoping" },
-    );
-}
-
-function createLiteral(
-    value: string | number | bigint | boolean | null,
-    span: SourceSpan,
-): LiteralNode {
-    if (typeof value === "bigint") {
-        assertPositiveUint64(value);
+function createPolicyValueExpression(value: NormalizedPolicyValue, span: SourceSpan): LiteralNode {
+    if (value.literalType === "null") {
         return {
             kind: "Literal",
             span,
-            literalType: "integer",
-            value: value.toString(),
-        };
-    }
-
-    if (typeof value === "number") {
-        assertFiniteNumber(value);
-        assertSafeIntegerLiteral(value);
-        return {
-            kind: "Literal",
-            span,
-            literalType: Number.isInteger(value) ? "integer" : "decimal",
-            value: String(value),
-        };
-    }
-
-    if (typeof value === "string") {
-        return {
-            kind: "Literal",
-            span,
-            literalType: "string",
-            value,
-        };
-    }
-
-    if (typeof value === "boolean") {
-        return {
-            kind: "Literal",
-            span,
-            literalType: "boolean",
-            value,
+            literalType: "null",
+            value: null,
         };
     }
 
     return {
         kind: "Literal",
         span,
-        literalType: "null",
-        value: null,
-    };
+        literalType: value.literalType,
+        value: value.value,
+    } as LiteralNode;
 }
 
 function assertPositiveUint64(value: bigint): void {
@@ -867,7 +860,7 @@ function hasRequiredTenantScope(
     expression: BoundExpression | undefined,
     alias: string,
     column: string,
-    expectedValue: string | boolean | null,
+    expectedValue: NormalizedPolicyValue,
 ): boolean {
     if (!expression) {
         return false;
@@ -905,9 +898,9 @@ function isTenantComparison(
     expression: BoundExpression,
     alias: string,
     column: string,
-    expectedValue: string | boolean | null,
+    expectedValue: NormalizedPolicyValue,
 ): boolean {
-    if (expectedValue === null) {
+    if (expectedValue.literalType === "null") {
         return (
             expression.kind === "BoundIsNullExpression" &&
             !expression.negated &&
@@ -941,34 +934,84 @@ function isScopedColumnReference(
 
 function isExpectedLiteral(
     expression: BoundExpression,
-    expectedValue: string | boolean | null,
+    expectedValue: NormalizedPolicyValue,
 ): boolean {
     return (
         expression.kind === "BoundLiteral" &&
-        normalizePolicyValue(expression.value) === expectedValue
+        expression.literalType === expectedValue.literalType &&
+        expression.value === expectedValue.value
     );
 }
 
-function normalizePolicyValue(value: unknown): string | boolean | null {
-    if (typeof value === "bigint") {
-        assertPositiveUint64(value);
-        return value.toString();
+function normalizePolicyValue(
+    value: unknown,
+    scopeValueType: TenantScopeValueType,
+): NormalizedPolicyValue {
+    if (value === null) {
+        return {
+            literalType: "null",
+            value: null,
+        };
     }
 
-    if (typeof value === "number") {
+    if (scopeValueType === "string") {
+        if (typeof value === "string") {
+            return {
+                literalType: "string",
+                value,
+            };
+        }
+
+        throw createTenantScopeValueTypeError(scopeValueType, value);
+    }
+
+    if (scopeValueType === "bigint") {
+        if (typeof value !== "bigint") {
+            throw createTenantScopeValueTypeError(scopeValueType, value);
+        }
+
+        assertPositiveUint64(value);
+        return {
+            literalType: "integer",
+            value: value.toString(),
+        };
+    }
+
+    if (scopeValueType === "number") {
+        if (typeof value !== "number") {
+            throw createTenantScopeValueTypeError(scopeValueType, value);
+        }
+
         assertFiniteNumber(value);
         assertSafeIntegerLiteral(value);
-        return String(value);
+        return {
+            literalType: Number.isInteger(value) ? "integer" : "decimal",
+            value: String(value),
+        };
     }
 
-    if (typeof value === "string" || typeof value === "boolean" || value === null) {
-        return value;
+    if (typeof value === "boolean") {
+        return {
+            literalType: "boolean",
+            value,
+        };
     }
 
-    throw new PolicyUsageError(
-        'Policy "tenant-scoping" only supports string, number, bigint, boolean, or null tenant values.',
+    throw createTenantScopeValueTypeError(scopeValueType, value);
+}
+
+function createTenantScopeValueTypeError(
+    scopeValueType: TenantScopeValueType,
+    value: unknown,
+): PolicyUsageError {
+    return new PolicyUsageError(
+        `Policy "${TENANT_SCOPING_POLICY_NAME}" requires ${scopeValueType} tenant values; received ${describePolicyValueType(value)}.`,
         { policyName: TENANT_SCOPING_POLICY_NAME },
     );
+}
+
+function describePolicyValueType(value: unknown): string {
+    return value === null ? "null" : typeof value;
 }
 
 function validateTenantScopeRules(
@@ -999,6 +1042,7 @@ function validateTenantScopeRules(
                 { allowQualified: false },
             ),
             contextKey: validateContextKey(scope.contextKey, policyName),
+            scopeValueType: validateScopeValueType(scope.scopeValueType, policyName),
         };
     });
 }
@@ -1091,6 +1135,24 @@ function validateContextKey(value: string, policyName: string): string {
     return trimmed;
 }
 
+function validateScopeValueType(
+    value: TenantScopingScopeOptions["scopeValueType"],
+    policyName: string,
+): TenantScopeValueType {
+    if (typeof value === "undefined") {
+        return "string";
+    }
+
+    if (value === "string" || value === "number" || value === "bigint" || value === "boolean") {
+        return value;
+    }
+
+    throw new PolicyConfigurationError(
+        `Policy "${policyName}" requires scopeValueType to be string, number, bigint, or boolean.`,
+        { policyName },
+    );
+}
+
 function resolveTenantScopeContextValues(
     rules: readonly TenantScopeRule[],
     context: Readonly<Record<string, unknown>>,
@@ -1137,8 +1199,50 @@ function getTenantScopeContextValue(
 function matchTenantScopeRules(
     rules: readonly TenantScopeRule[],
     names: readonly string[],
+    catalog: Catalog | undefined,
+    mode: "exact" | "short",
 ): readonly TenantScopeRule[] {
-    return rules.filter((rule) => names.some((name) => rule.tables.has(name)));
+    return rules.filter((rule) =>
+        names.some((name) => tenantScopeRuleMatchesName(rule, name, catalog, mode)),
+    );
+}
+
+function tenantScopeRuleMatchesName(
+    rule: TenantScopeRule,
+    name: string,
+    catalog: Catalog | undefined,
+    mode: "exact" | "short",
+): boolean {
+    if (rule.tables.has(name)) {
+        return true;
+    }
+
+    if (!catalog || mode === "short") {
+        return false;
+    }
+
+    for (const table of rule.tables) {
+        const resolved = catalog.getTable({ parts: table.split(".") });
+        if (resolved?.path.parts.map((part) => normalizeIdentifier(part)).join(".") === name) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function findScopedTableName(
+    names: readonly string[],
+    rules: readonly TenantScopeRule[],
+    catalog: Catalog | undefined,
+): string | undefined {
+    for (const name of names) {
+        if (rules.some((rule) => tenantScopeRuleMatchesName(rule, name, catalog, "exact"))) {
+            return name;
+        }
+    }
+
+    return undefined;
 }
 
 function collectTenantScopeMatchFromAst(
@@ -1158,8 +1262,8 @@ function collectTenantScopeMatchFromAst(
     const shortNames = schemaQualified ? uniqueNames([originalName, canonicalShortName]) : [];
 
     return {
-        exactRules: matchTenantScopeRules(rules, exactNames),
-        shortRules: matchTenantScopeRules(rules, shortNames),
+        exactRules: matchTenantScopeRules(rules, exactNames, catalog, "exact"),
+        shortRules: matchTenantScopeRules(rules, shortNames, catalog, "short"),
         names: uniqueNames([...exactNames, ...shortNames]),
         canonicalName,
         schemaQualified,
@@ -1169,6 +1273,7 @@ function collectTenantScopeMatchFromAst(
 function collectTenantScopeMatchFromBound(
     table: BoundTableReference,
     rules: readonly TenantScopeRule[],
+    catalog: Catalog | undefined,
 ): TenantScopeMatch {
     const canonicalPath = table.table.path.parts.map((part) => normalizeIdentifier(part));
     const canonicalName = canonicalPath.join(".");
@@ -1185,13 +1290,20 @@ function collectTenantScopeMatchFromBound(
             : normalizeIdentifier(table.table.name);
     const schemaQualified = table.source === "catalog" && table.table.path.parts.length > 1;
     const exactNames = uniqueNames(
-        schemaQualified ? [canonicalName, astName] : [canonicalName, astName, shortName],
+        schemaQualified
+            ? [canonicalName, astName]
+            : [
+                  canonicalName,
+                  astName,
+                  shortName,
+                  table.source === "catalog" ? undefined : table.alias,
+              ],
     );
     const shortNames = schemaQualified ? uniqueNames([shortName, canonicalShortName]) : [];
 
     return {
-        exactRules: matchTenantScopeRules(rules, exactNames),
-        shortRules: matchTenantScopeRules(rules, shortNames),
+        exactRules: matchTenantScopeRules(rules, exactNames, catalog, "exact"),
+        shortRules: matchTenantScopeRules(rules, shortNames, catalog, "short"),
         names: uniqueNames([...exactNames, ...shortNames]),
         canonicalName,
         schemaQualified,

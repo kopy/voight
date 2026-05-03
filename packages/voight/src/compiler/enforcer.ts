@@ -1,4 +1,5 @@
 import type { BoundQuery } from "../ast";
+import type { Catalog } from "../catalog";
 import { CompilerStage, type Diagnostic } from "../core/diagnostics";
 import { type CompilerPolicy, type PolicyContext, resolvePolicies } from "../policies";
 import { stageFailure, stageSuccess, type StageResult } from "../core/result";
@@ -6,6 +7,7 @@ import { stageFailure, stageSuccess, type StageResult } from "../core/result";
 export interface EnforcementOptions {
     readonly policies?: readonly CompilerPolicy[];
     readonly policyContext?: PolicyContext;
+    readonly catalog?: Catalog;
 }
 
 export type EnforcementResult = StageResult<
@@ -19,6 +21,7 @@ export function enforce(bound: BoundQuery, options: EnforcementOptions = {}): En
     const policies = resolvePolicies(options);
     const context = {
         context: options.policyContext ?? {},
+        catalog: options.catalog,
     };
 
     policies.forEach((policy) => {

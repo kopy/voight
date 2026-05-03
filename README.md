@@ -84,6 +84,12 @@ By default, `compile(...)` returns a public-safe result surface: emitted SQL on 
 - `allowedFunctionsPolicy(...)` to restrict callable SQL functions and `CURRENT_*` keywords
 - `supportedOperatorsPolicy()` to reject operators outside the supported policy surface
 
+`tenantScopingPolicy(...)` treats scope values as strings by default. If a scope column is
+numeric or boolean, configure `scopeValueType` explicitly, for example
+`scopeValueType: "bigint"` for a `BIGINT project_id`. For MySQL string scope columns,
+use binary or case-sensitive collation/comparison semantics so `project-alpha` cannot also
+match case/accent variants such as `PROJECT-ALPHA`.
+
 ## Example
 
 ```ts

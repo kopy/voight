@@ -110,6 +110,7 @@ function compileInternal(source: string, options: CompileOptions): CompileResult
     const enforced = enforce(bound.value, {
         policies: options.policies,
         policyContext: options.policyContext,
+        catalog: options.catalog,
     });
     if (!enforced.ok) {
         return {
