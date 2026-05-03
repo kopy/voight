@@ -70,6 +70,19 @@ describe("emitter literal escaping", () => {
             expect(escaped.emitted?.sql).toContain("'tenant\\\\'");
         }
     });
+
+    test("contains policy-injected SQL payloads inside one MySQL string literal", () => {
+        const result = compileTenantScoped(
+            "SELECT metric FROM timeseries",
+            "tenant-123' OR 1=1 /*",
+        );
+        expect(result.ok).toBe(true);
+        if (!result.ok) {
+            return;
+        }
+
+        expect(result.emitted?.sql).toContain("'tenant-123'' OR 1=1 /*'");
+    });
 });
 
 describe("emitter identifier escaping", () => {

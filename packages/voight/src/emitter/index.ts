@@ -164,9 +164,19 @@ function emitBoundExpression(expression: BoundExpression, parameterIndices: numb
                 : `-${emitBoundExpression(expression.operand, parameterIndices)}`;
         case "BoundBinaryExpression":
             return emitBinary(
-                emitBoundBinaryOperand(expression.left, expression.operator, parameterIndices),
+                emitBoundBinaryOperand(
+                    expression.left,
+                    expression.operator,
+                    parameterIndices,
+                    "left",
+                ),
                 expression.operator,
-                emitBoundBinaryOperand(expression.right, expression.operator, parameterIndices),
+                emitBoundBinaryOperand(
+                    expression.right,
+                    expression.operator,
+                    parameterIndices,
+                    "right",
+                ),
             );
         case "BoundFunctionCall":
             return `${expression.callee}(${expression.distinct ? "DISTINCT " : ""}${expression.arguments.map((arg) => emitBoundExpression(arg, parameterIndices)).join(", ")})${expression.over ? ` ${emitWindowSpecification(expression.over, parameterIndices)}` : ""}`;
@@ -333,10 +343,11 @@ function emitBoundBinaryOperand(
     expression: BoundExpression,
     parentOperator: BinaryExpressionNode["operator"],
     parameterIndices: number[],
+    side: "left" | "right",
 ): string {
     const emitted = emitBoundExpression(expression, parameterIndices);
     return expression.kind === "BoundBinaryExpression" &&
-        shouldParenthesizeBinary(expression.operator, parentOperator)
+        shouldParenthesizeBinary(expression.operator, parentOperator, side)
         ? `(${emitted})`
         : emitted;
 }
@@ -344,8 +355,38 @@ function emitBoundBinaryOperand(
 function shouldParenthesizeBinary(
     childOperator: BinaryExpressionNode["operator"],
     parentOperator: BinaryExpressionNode["operator"],
+    side: "left" | "right",
 ): boolean {
-    return binaryPrecedence(childOperator) < binaryPrecedence(parentOperator);
+    const childPrecedence = binaryPrecedence(childOperator);
+    const parentPrecedence = binaryPrecedence(parentOperator);
+    if (childPrecedence < parentPrecedence) {
+        return true;
+    }
+
+    return (
+        side === "right" &&
+        childPrecedence === parentPrecedence &&
+        !canFlattenRightBinaryOperand(parentOperator, childOperator)
+    );
+}
+
+function canFlattenRightBinaryOperand(
+    parentOperator: BinaryExpressionNode["operator"],
+    childOperator: BinaryExpressionNode["operator"],
+): boolean {
+    if (parentOperator === "AND" || parentOperator === "OR") {
+        return childOperator === parentOperator;
+    }
+
+    if (parentOperator === "+") {
+        return childOperator === "+";
+    }
+
+    if (parentOperator === "*") {
+        return childOperator === "*";
+    }
+
+    return false;
 }
 
 function binaryPrecedence(operator: BinaryExpressionNode["operator"]): number {

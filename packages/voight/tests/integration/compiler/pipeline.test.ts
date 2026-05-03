@@ -173,7 +173,7 @@ describe("compile", () => {
         );
     });
 
-    test("injects the configured default limit only on the outermost select", () => {
+    test("injects the configured default limit into every select", () => {
         const result = compile(
             "WITH recent_orders AS (SELECT user_id FROM orders) SELECT id FROM users WHERE id IN (SELECT user_id FROM recent_orders)",
             {
@@ -189,13 +189,13 @@ describe("compile", () => {
         }
 
         expect(result.emitted?.sql).toBe(
-            "WITH `recent_orders` AS (SELECT `orders`.`user_id` FROM `orders`) SELECT `users`.`id` FROM `users` WHERE `users`.`id` IN (SELECT `recent_orders`.`user_id` FROM `recent_orders`) LIMIT 25",
+            "WITH `recent_orders` AS (SELECT `orders`.`user_id` FROM `orders` LIMIT 25) SELECT `users`.`id` FROM `users` WHERE `users`.`id` IN (SELECT `recent_orders`.`user_id` FROM `recent_orders` LIMIT 25) LIMIT 25",
         );
         expect(result.rewrittenAst?.body.limit?.count.kind).toBe("Literal");
         if (result.rewrittenAst?.body.limit?.count.kind === "Literal") {
             expect(result.rewrittenAst.body.limit.count.value).toBe("25");
         }
-        expect(result.rewrittenAst?.with?.ctes[0]?.query.body.limit).toBeUndefined();
+        expect(result.rewrittenAst?.with?.ctes[0]?.query.body.limit?.count.kind).toBe("Literal");
     });
 
     test("does not apply any function policy unless one is configured", () => {

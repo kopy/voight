@@ -72,4 +72,20 @@ describe("catalog", () => {
         expect(table.id).toBe("analytics.users");
         expect(table.name).toBe("users");
     });
+
+    test("rejects dotted catalog path segments", () => {
+        expect(() =>
+            createTableSchema({
+                path: ["analytics.users"],
+                columns: ["id"],
+            }),
+        ).toThrow("cannot be empty or contain dots");
+
+        expect(() =>
+            createCatalogAlias({
+                from: ["analytics.users"],
+                to: ["analytics", "users"],
+            }),
+        ).toThrow("cannot be empty or contain dots");
+    });
 });

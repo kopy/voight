@@ -585,6 +585,7 @@ class TenantScopingPolicy implements CompilerPolicy {
             return undefined;
         }
 
+        const originalPath = table.name.parts.map((part) => normalizeIdentifier(part.name));
         const originalName = normalizeIdentifier(
             table.name.parts[table.name.parts.length - 1]?.name ?? "",
         );
@@ -608,7 +609,7 @@ class TenantScopingPolicy implements CompilerPolicy {
 
         this.#assertUnambiguousScopeMatch(matchedRules, table.span, match.names);
 
-        if (visibleCtes.has(originalName)) {
+        if (originalPath.length === 1 && visibleCtes.has(originalName)) {
             throw new PolicyDiagnosticError(
                 createDiagnostic({
                     code: DiagnosticCode.PolicyViolation,
@@ -1149,10 +1150,12 @@ function collectTenantScopeMatchFromAst(
     const originalQualified = originalPath.join(".");
     const originalName = originalPath[originalPath.length - 1] ?? originalQualified;
     const resolved = catalog.getTable({ parts: originalPath });
-    const canonicalName = resolved?.path.parts.join(".") ?? originalQualified;
+    const canonicalPath = resolved?.path.parts ?? originalPath;
+    const canonicalName = canonicalPath.join(".");
+    const canonicalShortName = canonicalPath[canonicalPath.length - 1] ?? canonicalName;
     const schemaQualified = (resolved?.path.parts.length ?? originalPath.length) > 1;
     const exactNames = uniqueNames([originalQualified, canonicalName]);
-    const shortNames = schemaQualified ? uniqueNames([originalName]) : [];
+    const shortNames = schemaQualified ? uniqueNames([originalName, canonicalShortName]) : [];
 
     return {
         exactRules: matchTenantScopeRules(rules, exactNames),
@@ -1167,7 +1170,9 @@ function collectTenantScopeMatchFromBound(
     table: BoundTableReference,
     rules: readonly TenantScopeRule[],
 ): TenantScopeMatch {
-    const canonicalName = table.table.path.parts.map((part) => normalizeIdentifier(part)).join(".");
+    const canonicalPath = table.table.path.parts.map((part) => normalizeIdentifier(part));
+    const canonicalName = canonicalPath.join(".");
+    const canonicalShortName = canonicalPath[canonicalPath.length - 1] ?? canonicalName;
     const astName =
         table.ast.kind === "TableReference"
             ? table.ast.name.parts.map((part) => normalizeIdentifier(part.name)).join(".")
@@ -1182,7 +1187,7 @@ function collectTenantScopeMatchFromBound(
     const exactNames = uniqueNames(
         schemaQualified ? [canonicalName, astName] : [canonicalName, astName, shortName],
     );
-    const shortNames = schemaQualified ? uniqueNames([shortName]) : [];
+    const shortNames = schemaQualified ? uniqueNames([shortName, canonicalShortName]) : [];
 
     return {
         exactRules: matchTenantScopeRules(rules, exactNames),

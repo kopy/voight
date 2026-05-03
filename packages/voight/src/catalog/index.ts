@@ -43,7 +43,7 @@ export class InMemoryCatalog implements Catalog {
 
 export function createIdentifierPath(...parts: string[]): IdentifierPath {
     return {
-        parts: parts.map(normalizeIdentifier),
+        parts: parts.map((part) => normalizeIdentifierPathSegment(part)),
     };
 }
 
@@ -57,7 +57,7 @@ export function createTableSchema(input: {
           }
     )[];
 }): TableSchema {
-    const normalizedPath = input.path.map(normalizeIdentifier);
+    const normalizedPath = input.path.map((part) => normalizeIdentifierPathSegment(part));
     if (normalizedPath.length === 0 || normalizedPath.some((part) => part.length === 0)) {
         throw new Error("createTableSchema requires a non-empty path.");
     }
@@ -95,8 +95,17 @@ export function normalizeIdentifier(value: string): string {
     return value.toLowerCase();
 }
 
+function normalizeIdentifierPathSegment(value: string): string {
+    const normalized = normalizeIdentifier(value);
+    if (!normalized || normalized.includes(".")) {
+        throw new Error("Catalog identifier path segments cannot be empty or contain dots.");
+    }
+
+    return normalized;
+}
+
 function normalizeIdentifierPath(path: IdentifierPath): string {
-    return path.parts.map(normalizeIdentifier).join(".");
+    return JSON.stringify(path.parts.map(normalizeIdentifier));
 }
 
 export class AliasCatalog implements Catalog {

@@ -96,7 +96,7 @@ describe("maxLimitPolicy abuse probes", () => {
         );
     });
 
-    test("ignores nested OFFSET values because only the outer result size is constrained", () => {
+    test("rejects nested OFFSET values above the configured maximum", () => {
         const result = compile(
             "SELECT id FROM users WHERE id IN (SELECT user_id FROM orders LIMIT 1 OFFSET 999999999) LIMIT 1",
             {
@@ -106,8 +106,10 @@ describe("maxLimitPolicy abuse probes", () => {
             },
         );
 
-        expect(result.ok).toBe(true);
-        expect(result.emitted?.sql).toContain("OFFSET 999999999");
+        expect(result.ok).toBe(false);
+        if (!result.ok) {
+            expect(result.diagnostics[0]?.code).toBe(DiagnosticCode.LimitExceeded);
+        }
     });
 
     test("rejects non-literal outer OFFSET expressions when maxOffset is configured", () => {

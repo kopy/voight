@@ -1,4 +1,6 @@
 import type { BoundExpression, BoundQuery, BoundSelectStatement, QueryAst } from "../ast";
+import { collectBoundPolicyDiagnostics } from "../ast/bound-policy-traversal";
+import { mapQueryAst } from "../ast/query-ast-traversal";
 import {
     CompilerStage,
     DiagnosticCode,
@@ -44,18 +46,19 @@ class MaxLimitPolicy implements CompilerPolicy {
     }
 
     rewrite(query: QueryAst): QueryAst {
-        if (typeof this.#defaultLimit === "undefined" || query.body.limit) {
+        if (typeof this.#defaultLimit === "undefined") {
             return query;
         }
 
-        return {
-            ...query,
-            body: addDefaultLimit(query.body, this.#defaultLimit),
-        };
+        return mapQueryAst(query, (select) =>
+            select.limit ? select : addDefaultLimit(select, this.#defaultLimit!),
+        );
     }
 
     enforce(bound: BoundQuery): readonly Diagnostic[] {
-        return this.#validateSelectLimit(bound.body) ?? [];
+        return collectBoundPolicyDiagnostics(bound, {
+            select: (select) => this.#validateSelectLimit(select),
+        });
     }
 
     #validateSelectLimit(select: BoundSelectStatement): readonly Diagnostic[] | void {

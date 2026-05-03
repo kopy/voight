@@ -174,6 +174,22 @@ describe("schema-qualified tenant scoping probes", () => {
         expect(rows).toEqual([{ series_name: "planted-row" }]);
     });
 
+    test("a short-name CTE does not shadow an explicit schema-qualified catalog table", () => {
+        const { result, rows } = executeScoped(
+            `WITH event_rollups AS (
+               SELECT '${VICTIM_WORKSPACE_ID}' AS workspace_id, 'planted-row' AS series_name
+             )
+             SELECT r.workspace_id
+             FROM analytics.event_rollups AS r
+             ORDER BY r.id
+             LIMIT 1`,
+        );
+
+        expect(result.emitted?.sql).toContain("FROM `analytics`.`event_rollups` AS `r`");
+        expect(result.emitted?.sql).toContain("`r`.`workspace_id` = 'workspace-alpha'");
+        expect(rows).toEqual([{ workspace_id: ATTACKER_WORKSPACE_ID }]);
+    });
+
     test("CASE-wrapped scalar subqueries cannot exfiltrate a victim workspace id", () => {
         const { rows } = executeScoped(
             `SELECT CASE

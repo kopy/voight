@@ -28,9 +28,11 @@ import type {
     BoundWindowSpecification,
     CaseExpressionNode,
     CastExpressionNode,
+    CastTypeNode,
     ExistsExpressionNode,
     ExpressionNode,
     GroupingExpressionNode,
+    IdentifierNode,
     IdentifierExpressionNode,
     InListExpressionNode,
     InSubqueryExpressionNode,
@@ -53,6 +55,8 @@ import {
 } from "../core/diagnostics";
 import { stageFailure, stageSuccess, type StageResult } from "../core/result";
 import type { SourceSpan } from "../core/source";
+
+const RAW_SQL_IDENTIFIER_PATTERN = /^[a-z_][a-z0-9_$]*$/;
 
 export type BindResult<T> = StageResult<T, CompilerStage.Binder, { scopeSize: number }>;
 
@@ -239,6 +243,14 @@ function bindFunction(
     node: BoundFunctionCall["ast"],
 ): BindResult<BoundFunctionCall> {
     const callee = normalizeIdentifier(node.callee.name);
+    if (!isSafeRawSqlIdentifier(node.callee, callee)) {
+        return context.fail(
+            DiagnosticCode.UnsupportedConstruct,
+            "Function names must be unquoted simple identifiers.",
+            node.callee.span,
+        );
+    }
+
     const args: BoundExpression[] = [];
     for (const arg of node.arguments) {
         const bound = context.bindExpression(arg);
@@ -350,6 +362,15 @@ function bindCast(
     context: BinderExpressionContext,
     node: CastExpressionNode,
 ): BindResult<BoundCastExpression> {
+    const unsafeTypeIdentifier = findUnsafeCastTypeIdentifier(node.targetType);
+    if (unsafeTypeIdentifier) {
+        return context.fail(
+            DiagnosticCode.UnsupportedConstruct,
+            "CAST target type names must be unquoted simple identifiers.",
+            unsafeTypeIdentifier.span,
+        );
+    }
+
     const expression = context.bindExpression(node.expression);
     if (!expression.ok) {
         return expression;
@@ -366,6 +387,29 @@ function bindCast(
         } satisfies BoundCastExpression,
         { scopeSize: context.scopeSize() },
     );
+}
+
+function findUnsafeCastTypeIdentifier(type: CastTypeNode): IdentifierNode | undefined {
+    for (const part of type.name.parts) {
+        if (!isSafeRawSqlIdentifier(part, normalizeIdentifier(part.name))) {
+            return part;
+        }
+    }
+
+    for (const argument of type.arguments) {
+        if (argument.kind === "CastType") {
+            const unsafe = findUnsafeCastTypeIdentifier(argument);
+            if (unsafe) {
+                return unsafe;
+            }
+        }
+    }
+
+    return undefined;
+}
+
+function isSafeRawSqlIdentifier(identifier: IdentifierNode, normalized: string): boolean {
+    return !identifier.quoted && RAW_SQL_IDENTIFIER_PATTERN.test(normalized);
 }
 
 function bindCase(

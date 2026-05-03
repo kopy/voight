@@ -148,4 +148,26 @@ describe("emit", () => {
             "SELECT `users`.`id` FROM `users` WHERE `users`.`age` NOT BETWEEN 18 AND 65 ORDER BY `users`.`created_at` BETWEEN '2024-01-01' AND '2024-12-31' DESC",
         );
     });
+
+    test("preserves non-associative select-alias expressions with parentheses", () => {
+        const subtraction = emit(bindStatement("SELECT age - 1 AS x FROM users ORDER BY 1 - x"));
+        expect(subtraction.ok).toBe(true);
+        if (subtraction.ok) {
+            expect(subtraction.value.sql).toContain("ORDER BY 1 - (`users`.`age` - 1) ASC");
+        }
+
+        const division = emit(bindStatement("SELECT age / 2 AS x FROM users ORDER BY 1 / x"));
+        expect(division.ok).toBe(true);
+        if (division.ok) {
+            expect(division.value.sql).toContain("ORDER BY 1 / (`users`.`age` / 2) ASC");
+        }
+
+        const comparison = emit(bindStatement("SELECT age = 1 AS x FROM users ORDER BY id = x"));
+        expect(comparison.ok).toBe(true);
+        if (comparison.ok) {
+            expect(comparison.value.sql).toContain(
+                "ORDER BY `users`.`id` = (`users`.`age` = 1) ASC",
+            );
+        }
+    });
 });
