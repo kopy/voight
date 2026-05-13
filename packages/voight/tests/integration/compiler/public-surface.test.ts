@@ -183,6 +183,7 @@ describe("public compile surface", () => {
                         tables: ["timeseries"],
                         scopeColumn: "tenant_id",
                         contextKey: "tenantId",
+                        scopeValueType: "string",
                     }),
                 ],
                 policyContext: { tenantId: "tenant-A" },

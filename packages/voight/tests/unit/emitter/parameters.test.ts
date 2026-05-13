@@ -7,6 +7,7 @@ const tenantPolicy = tenantScopingPolicy({
     tables: ["timeseries"],
     scopeColumn: "tenant_id",
     contextKey: "tenantId",
+    scopeValueType: "string",
 });
 
 function compileTenantScoped(sql: string, tenantId: unknown = "tenant-123") {

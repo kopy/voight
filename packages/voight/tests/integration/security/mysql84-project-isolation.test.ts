@@ -8,7 +8,12 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 
 import { InMemoryCatalog, createTableSchema } from "../../../src/catalog";
 import { compile } from "../../../src/compiler";
-import { maxLimitPolicy, tenantScopingPolicy, type CompilerPolicy } from "../../../src/policies";
+import {
+    allowedFunctionsPolicy,
+    maxLimitPolicy,
+    tenantScopingPolicy,
+    type CompilerPolicy,
+} from "../../../src/policies";
 
 const ATTACKER_PROJECT_ID = "project-alpha";
 const VICTIM_PROJECT_ID = "project-bravo";
@@ -37,6 +42,7 @@ const numericCatalog = new InMemoryCatalog([
 ]);
 
 const basePolicies: CompilerPolicy[] = [
+    allowedFunctionsPolicy({ allowedFunctions: new Set(["coalesce", "count"]) }),
     maxLimitPolicy({
         maxLimit: 100,
         defaultLimit: 25,
@@ -50,6 +56,7 @@ const eventsPolicies: CompilerPolicy[] = [
         tables: ["events"],
         scopeColumn: "project_id",
         contextKey: "projectId",
+        scopeValueType: "string",
     }),
 ];
 
@@ -59,6 +66,7 @@ const collationPolicies: CompilerPolicy[] = [
         tables: ["collation_events"],
         scopeColumn: "project_id",
         contextKey: "projectId",
+        scopeValueType: "string",
     }),
 ];
 

@@ -33,7 +33,7 @@ import {
     type PolicyRewriteContext,
 } from "./shared";
 
-const TENANT_SCOPING_POLICY_NAME = "tenant-scoping";
+export const TENANT_SCOPING_POLICY_NAME = "tenant-scoping";
 const MAX_UINT64 = (1n << 64n) - 1n;
 const MIN_POSITIVE_UINT64 = 1n;
 
@@ -43,7 +43,7 @@ export interface TenantScopingScopeOptions {
     readonly tables: readonly string[];
     readonly scopeColumn: string;
     readonly contextKey: string;
-    readonly scopeValueType?: TenantScopeValueType;
+    readonly scopeValueType: TenantScopeValueType;
 }
 
 export type TenantScopingPolicyOptions =
@@ -1140,7 +1140,10 @@ function validateScopeValueType(
     policyName: string,
 ): TenantScopeValueType {
     if (typeof value === "undefined") {
-        return "string";
+        throw new PolicyConfigurationError(
+            `Policy "${policyName}" requires scopeValueType to be configured explicitly.`,
+            { policyName },
+        );
     }
 
     if (value === "string" || value === "number" || value === "bigint" || value === "boolean") {

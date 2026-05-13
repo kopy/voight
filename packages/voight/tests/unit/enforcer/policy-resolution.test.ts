@@ -3,8 +3,8 @@ import { describe, expect, test } from "vitest";
 import { PolicyConflictError, resolvePolicies, tenantScopingPolicy } from "../../../src/policies";
 
 describe("policy resolution", () => {
-    test("returns an empty list when no policies are provided", () => {
-        expect(resolvePolicies()).toEqual([]);
+    test("adds a default deny-all function policy when no policies are provided", () => {
+        expect(resolvePolicies().map((policy) => policy.name)).toEqual(["allowed-functions"]);
     });
 
     test("throws when multiple explicit policies share the same name", () => {
@@ -25,11 +25,13 @@ describe("policy resolution", () => {
             tables: ["users"],
             scopeColumn: "tenant_id",
             contextKey: "tenantId",
+            scopeValueType: "string",
         });
         const ordersPolicy = tenantScopingPolicy({
             tables: ["orders"],
             scopeColumn: "workspace_id",
             contextKey: "workspaceId",
+            scopeValueType: "string",
         });
 
         expect(() =>

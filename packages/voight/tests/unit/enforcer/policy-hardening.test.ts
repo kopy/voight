@@ -14,6 +14,7 @@ import {
     PolicyConfigurationError,
     supportedOperatorsPolicy,
     tenantScopingPolicy,
+    type TenantScopingPolicyOptions,
 } from "../../../src/policies";
 import { createTestCatalog } from "../../../src/testing";
 
@@ -43,6 +44,20 @@ function injectUnsupportedOperator<T>(query: T): T {
 }
 
 describe("allowedFunctionsPolicy hardening", () => {
+    test("blocks functions by default when no allowlist is configured", () => {
+        for (const sql of ["SELECT SLEEP(1) FROM users", "SELECT COUNT(id) FROM users"]) {
+            const result = compile(sql, {
+                catalog: createTestCatalog(),
+                debug: true,
+            });
+
+            expect(result.ok, `Unexpected success for ${sql}`).toBe(false);
+            if (!result.ok) {
+                expect(result.diagnostics[0]?.code).toBe(DiagnosticCode.DisallowedFunction);
+            }
+        }
+    });
+
     test("blocks disallowed functions inside nested subqueries", () => {
         // The allowlist must recurse into inner queries, otherwise attackers can hide
         // side-effecting or expensive calls behind a subquery boundary.
@@ -96,12 +111,26 @@ describe("maxLimitPolicy abuse probes", () => {
         );
     });
 
-    test("rejects nested OFFSET values above the configured maximum", () => {
+    test("ignores nested OFFSET values because only the outer result size is constrained", () => {
         const result = compile(
             "SELECT id FROM users WHERE id IN (SELECT user_id FROM orders LIMIT 1 OFFSET 999999999) LIMIT 1",
             {
                 catalog: createTestCatalog(),
                 policies: [maxLimitPolicy({ maxLimit: 100, maxOffset: 1000 })],
+                debug: true,
+            },
+        );
+
+        expect(result.ok).toBe(true);
+        expect(result.emitted?.sql).toContain("OFFSET 999999999");
+    });
+
+    test("rejects nested OFFSET values above the configured maximum when recursive", () => {
+        const result = compile(
+            "SELECT id FROM users WHERE id IN (SELECT user_id FROM orders LIMIT 1 OFFSET 999999999) LIMIT 1",
+            {
+                catalog: createTestCatalog(),
+                policies: [maxLimitPolicy({ maxLimit: 100, maxOffset: 1000, recursive: true })],
                 debug: true,
             },
         );
@@ -177,6 +206,7 @@ describe("tenantScopingPolicy boundaries", () => {
         tables: ["timeseries"],
         scopeColumn: "tenant_id",
         contextKey: "tenantId",
+        scopeValueType: "string",
     });
     const bigintPolicy = tenantScopingPolicy({
         tables: ["timeseries"],
@@ -189,6 +219,12 @@ describe("tenantScopingPolicy boundaries", () => {
         scopeColumn: "tenant_id",
         contextKey: "tenantId",
         scopeValueType: "number",
+    });
+    const booleanPolicy = tenantScopingPolicy({
+        tables: ["timeseries"],
+        scopeColumn: "tenant_id",
+        contextKey: "tenantId",
+        scopeValueType: "boolean",
     });
 
     test("enforcement rejects semantically equivalent but non-canonical tenant predicates", () => {
@@ -231,6 +267,7 @@ describe("tenantScopingPolicy boundaries", () => {
             tables: ["timeseries"],
             scopeColumn: "tenant_id",
             contextKey: "tenantId",
+            scopeValueType: "string",
         }).enforce?.(result.bound, {
             context: { tenantId: "tenant-123" },
         });
@@ -262,11 +299,13 @@ describe("tenantScopingPolicy boundaries", () => {
                         tables: ["users"],
                         scopeColumn: "tenant_id",
                         contextKey: "tenantId",
+                        scopeValueType: "string",
                     },
                     {
                         tables: ["users"],
                         scopeColumn: "workspace_id",
                         contextKey: "workspaceId",
+                        scopeValueType: "string",
                     },
                 ],
             }),
@@ -279,6 +318,7 @@ describe("tenantScopingPolicy boundaries", () => {
                 tables: ["`users`"],
                 scopeColumn: "tenant_id",
                 contextKey: "tenantId",
+                scopeValueType: "string",
             }),
         ).toThrow(PolicyConfigurationError);
     });
@@ -289,7 +329,29 @@ describe("tenantScopingPolicy boundaries", () => {
                 tables: ["users"],
                 scopeColumn: "tenant-id",
                 contextKey: "tenantId",
+                scopeValueType: "string",
             }),
+        ).toThrow(PolicyConfigurationError);
+    });
+
+    test("requires tenant scope value types to be configured explicitly", () => {
+        expect(() =>
+            tenantScopingPolicy({
+                tables: ["users"],
+                scopeColumn: "tenant_id",
+                contextKey: "tenantId",
+            } as unknown as TenantScopingPolicyOptions),
+        ).toThrow(PolicyConfigurationError);
+    });
+
+    test("rejects invalid tenant scope value type configuration", () => {
+        expect(() =>
+            tenantScopingPolicy({
+                tables: ["users"],
+                scopeColumn: "tenant_id",
+                contextKey: "tenantId",
+                scopeValueType: "uuid",
+            } as unknown as TenantScopingPolicyOptions),
         ).toThrow(PolicyConfigurationError);
     });
 
@@ -310,11 +372,13 @@ describe("tenantScopingPolicy boundaries", () => {
                             tables: ["users"],
                             scopeColumn: "tenant_id",
                             contextKey: "tenantId",
+                            scopeValueType: "string",
                         },
                         {
                             tables: ["analytics.users"],
                             scopeColumn: "workspace_id",
                             contextKey: "workspaceId",
+                            scopeValueType: "string",
                         },
                     ],
                 }),
@@ -357,11 +421,13 @@ describe("tenantScopingPolicy boundaries", () => {
                             tables: ["projects"],
                             scopeColumn: "tenant_id",
                             contextKey: "tenantId",
+                            scopeValueType: "string",
                         },
                         {
                             tables: ["internal_projects"],
                             scopeColumn: "workspace_id",
                             contextKey: "workspaceId",
+                            scopeValueType: "string",
                         },
                     ],
                 }),
@@ -424,6 +490,23 @@ describe("tenantScopingPolicy boundaries", () => {
         }
     });
 
+    test("rejects non-bigint values for bigint tenant scopes", () => {
+        for (const tenantId of ["42", 42, true]) {
+            const result = compile("SELECT metric FROM timeseries", {
+                catalog: createTestCatalog(),
+                policies: [bigintPolicy],
+                policyContext: { tenantId },
+                debug: true,
+            });
+
+            expect(result.ok, `Unexpected success for ${String(tenantId)}`).toBe(false);
+            if (!result.ok) {
+                expect(result.diagnostics[0]?.code).toBe(DiagnosticCode.PolicyExecutionError);
+                expect(result.diagnostics[0]?.message).toContain("requires bigint tenant values");
+            }
+        }
+    });
+
     test("rejects unsafe integer number tenant values that should be bigint", () => {
         const result = compile("SELECT metric FROM timeseries", {
             catalog: createTestCatalog(),
@@ -436,6 +519,23 @@ describe("tenantScopingPolicy boundaries", () => {
         if (!result.ok) {
             expect(result.diagnostics[0]?.code).toBe(DiagnosticCode.PolicyExecutionError);
             expect(result.diagnostics[0]?.message).toContain("passed as bigint");
+        }
+    });
+
+    test("rejects non-number values for number tenant scopes", () => {
+        for (const tenantId of ["42", 42n, false]) {
+            const result = compile("SELECT metric FROM timeseries", {
+                catalog: createTestCatalog(),
+                policies: [numberPolicy],
+                policyContext: { tenantId },
+                debug: true,
+            });
+
+            expect(result.ok, `Unexpected success for ${String(tenantId)}`).toBe(false);
+            if (!result.ok) {
+                expect(result.diagnostics[0]?.code).toBe(DiagnosticCode.PolicyExecutionError);
+                expect(result.diagnostics[0]?.message).toContain("requires number tenant values");
+            }
         }
     });
 
@@ -454,6 +554,23 @@ describe("tenantScopingPolicy boundaries", () => {
             if (!result.ok) {
                 expect(result.diagnostics[0]?.code).toBe(DiagnosticCode.PolicyExecutionError);
                 expect(result.diagnostics[0]?.message).toContain("to be finite");
+            }
+        }
+    });
+
+    test("rejects non-boolean values for boolean tenant scopes", () => {
+        for (const tenantId of ["true", 1, 0n]) {
+            const result = compile("SELECT metric FROM timeseries", {
+                catalog: createTestCatalog(),
+                policies: [booleanPolicy],
+                policyContext: { tenantId },
+                debug: true,
+            });
+
+            expect(result.ok, `Unexpected success for ${String(tenantId)}`).toBe(false);
+            if (!result.ok) {
+                expect(result.diagnostics[0]?.code).toBe(DiagnosticCode.PolicyExecutionError);
+                expect(result.diagnostics[0]?.message).toContain("requires boolean tenant values");
             }
         }
     });

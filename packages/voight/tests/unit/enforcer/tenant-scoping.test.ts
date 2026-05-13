@@ -10,6 +10,7 @@ describe("tenant scoping enforcement", () => {
         tables: ["timeseries"],
         scopeColumn: "tenant_id",
         contextKey: "tenantId",
+        scopeValueType: "string",
     });
 
     test("rejects OR-based bypasses during enforcement", () => {
@@ -48,6 +49,7 @@ describe("tenant scoping enforcement", () => {
             tables: ["users", "orders", "internal_projects"],
             scopeColumn: "tenant_id",
             contextKey: "tenantId",
+            scopeValueType: "string",
         });
         const bound = bindStatement(
             "SELECT u.id, o.total, p.name FROM users AS u INNER JOIN orders AS o ON o.user_id = u.id AND o.tenant_id = 'tenant-123' LEFT JOIN internal_projects AS p ON p.id = o.id AND p.tenant_id = 'tenant-123' WHERE u.tenant_id = 'tenant-123' AND u.age > 18",
@@ -65,6 +67,7 @@ describe("tenant scoping enforcement", () => {
             tables: ["users", "orders", "internal_projects"],
             scopeColumn: "tenant_id",
             contextKey: "tenantId",
+            scopeValueType: "string",
         });
         const bound = bindStatement(
             "SELECT u.id, o.total, p.name FROM users AS u INNER JOIN orders AS o ON o.user_id = u.id AND o.tenant_id = 'tenant-123' LEFT JOIN internal_projects AS p ON p.id = o.id WHERE u.tenant_id = 'tenant-123'",

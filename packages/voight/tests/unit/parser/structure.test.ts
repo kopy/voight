@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { compileStrict } from "../../_support/compile";
+import { compileStrict, compileWithAllowedFunctions } from "../../_support/compile";
 
 describe("parser structural boundaries", () => {
     test("rejects empty clause bodies", () => {
@@ -65,9 +65,9 @@ describe("parser structural boundaries", () => {
     });
 
     test("accepts window functions with OVER, PARTITION BY, and ORDER BY", () => {
-        expect(compileStrict("SELECT COUNT(*) OVER () FROM users").ok).toBe(true);
+        expect(compileWithAllowedFunctions("SELECT COUNT(*) OVER () FROM users").ok).toBe(true);
         expect(
-            compileStrict(
+            compileWithAllowedFunctions(
                 "SELECT SUM(id) OVER (PARTITION BY age ORDER BY created_at DESC) FROM users",
             ).ok,
         ).toBe(true);

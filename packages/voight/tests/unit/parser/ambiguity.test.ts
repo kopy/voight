@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { compileStrict } from "../../_support/compile";
+import { compileStrict, compileWithAllowedFunctions } from "../../_support/compile";
 
 describe("parser ambiguity boundaries", () => {
     test("treats a trailing identifier as an implicit alias", () => {
@@ -15,7 +15,9 @@ describe("parser ambiguity boundaries", () => {
 
     test("distinguishes bare identifiers from function calls", () => {
         expect(compileStrict("SELECT count FROM users").ok).toBe(false);
-        expect(compileStrict("SELECT count() FROM users").ok).toBe(true);
+        expect(
+            compileWithAllowedFunctions("SELECT count() FROM users", new Set(["count"])).ok,
+        ).toBe(true);
     });
 
     test("keeps qualified references distinct from aliases", () => {

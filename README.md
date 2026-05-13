@@ -80,15 +80,22 @@ By default, `compile(...)` returns a public-safe result surface: emitted SQL on 
 `voight` currently ships with these policy helpers:
 
 - `tenantScopingPolicy(...)` to inject and enforce tenant filters on configured tables
-- `maxLimitPolicy(...)` to cap `LIMIT`, optionally cap `OFFSET`, and optionally add a default `LIMIT`
+- `maxLimitPolicy(...)` to cap the outer `LIMIT`, optionally cap outer `OFFSET`, and optionally add a default outer `LIMIT`
 - `allowedFunctionsPolicy(...)` to restrict callable SQL functions and `CURRENT_*` keywords
 - `supportedOperatorsPolicy()` to reject operators outside the supported policy surface
 
-`tenantScopingPolicy(...)` treats scope values as strings by default. If a scope column is
-numeric or boolean, configure `scopeValueType` explicitly, for example
-`scopeValueType: "bigint"` for a `BIGINT project_id`. For MySQL string scope columns,
-use binary or case-sensitive collation/comparison semantics so `project-alpha` cannot also
-match case/accent variants such as `PROJECT-ALPHA`.
+`maxLimitPolicy(...)` constrains the final result set by default, so nested selects are not
+limited unless `recursive: true` is configured.
+
+`tenantScopingPolicy(...)` requires `scopeValueType` on every scope rule and enforces that type
+at runtime. Use `scopeValueType: "string"` for string scope columns, or configure the matching
+numeric or boolean type, for example `scopeValueType: "bigint"` for a `BIGINT project_id`.
+
+String tenant scopes require careful database configuration. MySQL in particular has many
+string comparison gotchas around implicit casts, collations, charsets, padding, and
+case/accent equivalence. Avoid string tenant identifiers unless those semantics are deliberate;
+if you use them, choose binary or otherwise case-sensitive comparison semantics so values such
+as `project-alpha` and `PROJECT-ALPHA` cannot share a scope unintentionally.
 
 ## Example
 
@@ -118,6 +125,7 @@ const result = compile(
                 tables: ["tracking.time_series_stats"],
                 scopeColumn: "tenant_id",
                 contextKey: "tenantId",
+                scopeValueType: "string",
             }),
         ],
         policyContext: {

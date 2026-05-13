@@ -3,7 +3,7 @@ import { describe, expect, test, beforeAll, afterAll } from "vitest";
 
 import { compile } from "../../src/compiler";
 import { InMemoryCatalog, createTableSchema } from "../../src/catalog";
-import { tenantScopingPolicy } from "../../src/policies";
+import { allowedFunctionsPolicy, tenantScopingPolicy } from "../../src/policies";
 
 /**
  * END-TO-END VERIFICATION: Tenant scoping now works for all query forms.
@@ -38,12 +38,14 @@ const tenantPolicy = tenantScopingPolicy({
     tables: ["metrics"],
     scopeColumn: "tenant_id",
     contextKey: "tenantId",
+    scopeValueType: "string",
 });
 
 const joinTenantPolicy = tenantScopingPolicy({
     tables: ["users", "orders"],
     scopeColumn: "tenant_id",
     contextKey: "tenantId",
+    scopeValueType: "string",
 });
 
 const mixedColumnTenantPolicy = tenantScopingPolicy({
@@ -52,19 +54,24 @@ const mixedColumnTenantPolicy = tenantScopingPolicy({
             tables: ["users"],
             scopeColumn: "tenant_id",
             contextKey: "tenantId",
+            scopeValueType: "string",
         },
         {
             tables: ["subscriptions"],
             scopeColumn: "account_id",
             contextKey: "tenantId",
+            scopeValueType: "string",
         },
     ],
+});
+const allowedFunctionPolicy = allowedFunctionsPolicy({
+    allowedFunctions: new Set(["coalesce", "count"]),
 });
 
 function compileTenantScoped(sql: string, tenantId = "tenant-A") {
     return compile(sql, {
         catalog,
-        policies: [tenantPolicy],
+        policies: [tenantPolicy, allowedFunctionPolicy],
         policyContext: { tenantId },
         debug: true,
     });
@@ -73,7 +80,7 @@ function compileTenantScoped(sql: string, tenantId = "tenant-A") {
 function compileJoinTenantScoped(sql: string, tenantId = "tenant-A") {
     return compile(sql, {
         catalog,
-        policies: [joinTenantPolicy],
+        policies: [joinTenantPolicy, allowedFunctionPolicy],
         policyContext: { tenantId },
         debug: true,
     });
@@ -82,7 +89,7 @@ function compileJoinTenantScoped(sql: string, tenantId = "tenant-A") {
 function compileMixedColumnTenantScoped(sql: string, tenantId = "tenant-A") {
     return compile(sql, {
         catalog,
-        policies: [mixedColumnTenantPolicy],
+        policies: [mixedColumnTenantPolicy, allowedFunctionPolicy],
         policyContext: { tenantId },
         debug: true,
     });
@@ -155,6 +162,24 @@ describe("E2E: safe queries return only tenant-A data", () => {
 });
 
 describe("E2E FIXED: expression subqueries no longer leak cross-tenant data", () => {
+    test("explicit victim predicates on the scoped table return no rows", () => {
+        const result = compileTenantScoped(
+            "SELECT metric_name FROM metrics WHERE tenant_id = 'tenant-B' ORDER BY id",
+        );
+        expect(result.ok).toBe(true);
+        const rows = db.prepare(toSQLite(result.emitted!.sql)).all() as { metric_name: string }[];
+        expect(rows).toEqual([]);
+    });
+
+    test("CTEs with victim predicates cannot resurrect victim rows", () => {
+        const result = compileTenantScoped(
+            "WITH victim_metrics AS (SELECT metric_name FROM metrics WHERE tenant_id = 'tenant-B') SELECT metric_name FROM victim_metrics ORDER BY metric_name",
+        );
+        expect(result.ok).toBe(true);
+        const rows = db.prepare(toSQLite(result.emitted!.sql)).all() as { metric_name: string }[];
+        expect(rows).toEqual([]);
+    });
+
     test("EXISTS subquery is now scoped — cannot detect tenant-B data", () => {
         const result = compileTenantScoped(
             "SELECT name FROM users WHERE EXISTS (SELECT 1 FROM metrics WHERE metrics.tenant_id = 'tenant-B')",
@@ -193,6 +218,17 @@ describe("E2E FIXED: expression subqueries no longer leak cross-tenant data", ()
         expect(values).not.toContain(99.9);
     });
 
+    test("function-argument scalar subqueries cannot extract tenant-B data", () => {
+        const result = compileTenantScoped(
+            "SELECT COALESCE((SELECT metric_name FROM metrics WHERE metrics.tenant_id = 'tenant-B' LIMIT 1), 'none') AS leaked_metric FROM users LIMIT 1",
+        );
+        expect(result.ok).toBe(true);
+        const rows = db.prepare(toSQLite(result.emitted!.sql)).all() as Array<{
+            leaked_metric: string;
+        }>;
+        expect(rows).toEqual([{ leaked_metric: "none" }]);
+    });
+
     test("IN subquery cannot enumerate tenant-B IDs", () => {
         const result = compileTenantScoped(
             "SELECT users.id, users.name FROM users WHERE users.id IN (SELECT metrics.id FROM metrics WHERE metrics.tenant_id = 'tenant-B')",
@@ -202,6 +238,27 @@ describe("E2E FIXED: expression subqueries no longer leak cross-tenant data", ()
         const rows = db.prepare(sql).all() as { id: number }[];
         // tenant-B IDs are no longer visible
         expect(rows.length).toBe(0);
+    });
+
+    test("IN-list scalar subqueries cannot smuggle tenant-B IDs", () => {
+        const result = compileTenantScoped(
+            "SELECT id, metric_name FROM metrics WHERE id IN ((SELECT id FROM metrics WHERE tenant_id = 'tenant-B' LIMIT 1), 1) ORDER BY id",
+        );
+        expect(result.ok).toBe(true);
+        const rows = db.prepare(toSQLite(result.emitted!.sql)).all() as Array<{
+            id: number;
+            metric_name: string;
+        }>;
+        expect(rows).toEqual([{ id: 1, metric_name: "cpu" }]);
+    });
+
+    test("HAVING subqueries cannot reveal tenant-B data", () => {
+        const result = compileTenantScoped(
+            "SELECT metric_name, COUNT(id) AS metric_count FROM metrics GROUP BY metric_name HAVING (SELECT COUNT(id) FROM metrics WHERE tenant_id = 'tenant-B') > 0 ORDER BY metric_name",
+        );
+        expect(result.ok).toBe(true);
+        const rows = db.prepare(toSQLite(result.emitted!.sql)).all();
+        expect(rows).toEqual([]);
     });
 
     test("LIMIT/OFFSET iteration cannot extract tenant-B data", () => {
@@ -255,6 +312,25 @@ describe("E2E: tenant scoping across joined tables", () => {
             { name: "Alice", total: null },
             { name: "Bob", total: 50 },
         ]);
+    });
+
+    test("CROSS JOIN scopes the joined table even when WHERE tries to widen it", () => {
+        const result = compileTenantScoped(
+            "SELECT m.metric_name, other.metric_name AS other_metric_name FROM metrics AS m CROSS JOIN metrics AS other WHERE other.tenant_id = 'tenant-B' OR 1 = 1 ORDER BY m.id, other.id LIMIT 10",
+        );
+        expect(result.ok).toBe(true);
+        const rows = db.prepare(toSQLite(result.emitted!.sql)).all() as Array<{
+            metric_name: string;
+            other_metric_name: string;
+        }>;
+        expect(rows.length).toBe(4);
+        expect(
+            rows.every(
+                (row) =>
+                    !row.metric_name.startsWith("SECRET") &&
+                    !row.other_metric_name.startsWith("SECRET"),
+            ),
+        ).toBe(true);
     });
 
     test("explicit scope rules can scope joined tables that use different column names", () => {

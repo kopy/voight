@@ -1,6 +1,10 @@
-import { allowedFunctionsPolicy, type AllowedFunctionsPolicyOptions } from "./allowed-functions";
-import { maxLimitPolicy, type MaxLimitPolicyOptions } from "./max-limit";
-import { supportedOperatorsPolicy } from "./supported-operators";
+import {
+    ALLOWED_FUNCTIONS_POLICY_NAME,
+    allowedFunctionsPolicy,
+    type AllowedFunctionsPolicyOptions,
+} from "./allowed-functions";
+import { MAX_LIMIT_POLICY_NAME, maxLimitPolicy, type MaxLimitPolicyOptions } from "./max-limit";
+import { SUPPORTED_OPERATORS_POLICY_NAME, supportedOperatorsPolicy } from "./supported-operators";
 import {
     PolicyConflictError,
     PolicyConfigurationError,
@@ -11,6 +15,7 @@ import {
     type PolicySelectionOptions,
 } from "./shared";
 import {
+    TENANT_SCOPING_POLICY_NAME,
     tenantScopingPolicy,
     type TenantScopingPolicyOptions,
     type TenantScopingScopeOptions,
@@ -34,6 +39,8 @@ export type {
 };
 
 export {
+    ALLOWED_FUNCTIONS_POLICY_NAME,
+    MAX_LIMIT_POLICY_NAME,
     allowedFunctionsPolicy,
     maxLimitPolicy,
     PolicyConflictError,
@@ -41,10 +48,18 @@ export {
     PolicyDiagnosticError,
     PolicyError,
     PolicyUsageError,
+    SUPPORTED_OPERATORS_POLICY_NAME,
+    TENANT_SCOPING_POLICY_NAME,
     supportedOperatorsPolicy,
     tenantScopingPolicy,
 };
 
 export function resolvePolicies(options: PolicySelectionOptions = {}) {
-    return dedupePoliciesByName(options.policies ?? []);
+    const policies = dedupePoliciesByName(options.policies ?? []);
+    if (policies.some((policy) => policy.name === ALLOWED_FUNCTIONS_POLICY_NAME)) {
+        return policies;
+    }
+
+    // If no allowed functions policy is provided, add a default one that disallows all functions.
+    return [allowedFunctionsPolicy({ allowedFunctions: new Set() }), ...policies];
 }

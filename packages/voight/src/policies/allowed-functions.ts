@@ -17,8 +17,10 @@ export function allowedFunctionsPolicy(options: AllowedFunctionsPolicyOptions): 
     return new AllowedFunctionsPolicy(options);
 }
 
+export const ALLOWED_FUNCTIONS_POLICY_NAME = "allowed-functions";
+
 class AllowedFunctionsPolicy implements CompilerPolicy {
-    readonly name = "allowed-functions";
+    readonly name = ALLOWED_FUNCTIONS_POLICY_NAME;
     readonly #allowedFunctions: ReadonlySet<string>;
 
     constructor(options: AllowedFunctionsPolicyOptions) {

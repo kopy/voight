@@ -1,12 +1,13 @@
 import { describe, expect, test } from "vitest";
 
-import { tenantScopingPolicy } from "../../../src/policies";
+import { allowedFunctionsPolicy, tenantScopingPolicy } from "../../../src/policies";
 import { compileStrict } from "../../_support/compile";
 
 const tenantPolicy = tenantScopingPolicy({
     tables: ["timeseries", "orders"],
     scopeColumn: "tenant_id",
     contextKey: "tenantId",
+    scopeValueType: "string",
 });
 
 const bigintTenantPolicy = tenantScopingPolicy({
@@ -32,7 +33,7 @@ const booleanTenantPolicy = tenantScopingPolicy({
 
 function compileTenantScoped(sql: string, tenantId: unknown = "tenant-123") {
     return compileStrict(sql, {
-        policies: [tenantPolicy],
+        policies: [tenantPolicy, allowedFunctionsPolicy({ allowedFunctions: new Set(["count"]) })],
         policyContext: { tenantId },
     });
 }
@@ -110,7 +111,9 @@ describe("emitter tenant scoping output", () => {
         const cases = [
             { policy: tenantPolicy, tenantId: "my-tenant", fragment: "'my-tenant'" },
             { policy: numberTenantPolicy, tenantId: 42, fragment: "= 42" },
+            { policy: numberTenantPolicy, tenantId: 42.5, fragment: "= 42.5" },
             { policy: booleanTenantPolicy, tenantId: true, fragment: "= TRUE" },
+            { policy: booleanTenantPolicy, tenantId: false, fragment: "= FALSE" },
             { policy: tenantPolicy, tenantId: null, fragment: "IS NULL" },
         ] as const;
 

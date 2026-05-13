@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 
 import { compile } from "../../../src/compiler";
-import { tenantScopingPolicy } from "../../../src/policies";
+import { allowedFunctionsPolicy, tenantScopingPolicy } from "../../../src/policies";
 import { createTestCatalog } from "../../../src/testing";
 
 /**
@@ -17,12 +17,16 @@ const tenantPolicy = tenantScopingPolicy({
     tables: ["timeseries"],
     scopeColumn: "tenant_id",
     contextKey: "tenantId",
+    scopeValueType: "string",
+});
+const allowedFunctionPolicy = allowedFunctionsPolicy({
+    allowedFunctions: new Set(["count", "min", "max"]),
 });
 
 function compileTenantScoped(sql: string) {
     return compile(sql, {
         catalog,
-        policies: [tenantPolicy],
+        policies: [tenantPolicy, allowedFunctionPolicy],
         policyContext: { tenantId: "tenant-123" },
         debug: true,
     });

@@ -57,6 +57,7 @@ const result = compile(
                 tables: ["tracking.time_series_stats"],
                 scopeColumn: "tenant_id",
                 contextKey: "tenantId",
+                scopeValueType: "string",
             }),
         ],
         policyContext: {
@@ -133,14 +134,22 @@ Use `AliasCatalog` and `createCatalogAlias(...)` if your public logical table na
 ## Built-in Policies
 
 - `tenantScopingPolicy(...)` injects tenant predicates during rewrite and verifies them during enforcement.
-- `maxLimitPolicy(...)` caps `LIMIT`, can cap `OFFSET`, and can add a default `LIMIT`.
+- `maxLimitPolicy(...)` caps the outer `LIMIT`, can cap the outer `OFFSET`, and can add a default outer `LIMIT`.
 - `allowedFunctionsPolicy(...)` allowlists function calls and `CURRENT_*` keywords.
 - `supportedOperatorsPolicy()` rejects operators outside the supported policy surface.
 
-`tenantScopingPolicy(...)` defaults scope values to strings. If the scoped column is numeric or
-boolean, set `scopeValueType` explicitly, for example `scopeValueType: "bigint"` for a
-`BIGINT project_id`. On MySQL, string scope columns should use binary or case-sensitive
-collation/comparison semantics so equivalent case/accent variants do not cross tenant boundaries.
+`maxLimitPolicy(...)` constrains the final result set by default, so nested selects are not
+limited unless `recursive: true` is configured.
+
+`tenantScopingPolicy(...)` requires `scopeValueType` on every scope rule and enforces that type
+at runtime. Use `scopeValueType: "string"` for string scope columns, or configure the matching
+numeric or boolean type, for example `scopeValueType: "bigint"` for a `BIGINT project_id`.
+
+String tenant scopes require careful database configuration. MySQL in particular has many string
+comparison gotchas around implicit casts, collations, charsets, padding, and case/accent
+equivalence. Avoid string tenant identifiers unless those semantics are deliberate; if you use
+them, choose binary or otherwise case-sensitive comparison semantics so values such as
+`project-alpha` and `PROJECT-ALPHA` cannot share a scope unintentionally.
 
 ## Repository
 

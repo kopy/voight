@@ -14,17 +14,26 @@ export interface MaxLimitPolicyOptions {
     readonly maxLimit: number;
     readonly maxOffset?: number;
     readonly defaultLimit?: number;
+    /**
+     * When false, the policy controls only the final result set returned by the
+     * compiled query. Enable this to require every nested SELECT to carry its
+     * own bounded LIMIT/OFFSET as well.
+     */
+    readonly recursive?: boolean;
 }
+
+export const MAX_LIMIT_POLICY_NAME = "max-limit";
 
 export function maxLimitPolicy(options: MaxLimitPolicyOptions): CompilerPolicy {
     return new MaxLimitPolicy(options);
 }
 
 class MaxLimitPolicy implements CompilerPolicy {
-    readonly name = "max-limit";
+    readonly name = MAX_LIMIT_POLICY_NAME;
     readonly #maxLimit: number;
     readonly #maxOffset?: number;
     readonly #defaultLimit?: number;
+    readonly #recursive: boolean;
 
     constructor(options: MaxLimitPolicyOptions) {
         this.#maxLimit = validateNonNegativeInteger(options.maxLimit, "maxLimit");
@@ -36,11 +45,12 @@ class MaxLimitPolicy implements CompilerPolicy {
             typeof options.defaultLimit === "undefined"
                 ? undefined
                 : validateNonNegativeInteger(options.defaultLimit, "defaultLimit");
+        this.#recursive = options.recursive ?? false;
 
         if (typeof this.#defaultLimit !== "undefined" && this.#defaultLimit > this.#maxLimit) {
             throw new PolicyConfigurationError(
-                `Policy "max-limit" requires defaultLimit (${this.#defaultLimit}) to be less than or equal to maxLimit (${this.#maxLimit}).`,
-                { policyName: "max-limit" },
+                `Policy "${MAX_LIMIT_POLICY_NAME}" requires defaultLimit (${this.#defaultLimit}) to be less than or equal to maxLimit (${this.#maxLimit}).`,
+                { policyName: MAX_LIMIT_POLICY_NAME },
             );
         }
     }
@@ -50,12 +60,25 @@ class MaxLimitPolicy implements CompilerPolicy {
             return query;
         }
 
+        if (!this.#recursive) {
+            return query.body.limit
+                ? query
+                : {
+                      ...query,
+                      body: addDefaultLimit(query.body, this.#defaultLimit),
+                  };
+        }
+
         return mapQueryAst(query, (select) =>
             select.limit ? select : addDefaultLimit(select, this.#defaultLimit!),
         );
     }
 
     enforce(bound: BoundQuery): readonly Diagnostic[] {
+        if (!this.#recursive) {
+            return this.#validateSelectLimit(bound.body) ?? [];
+        }
+
         return collectBoundPolicyDiagnostics(bound, {
             select: (select) => this.#validateSelectLimit(select),
         });

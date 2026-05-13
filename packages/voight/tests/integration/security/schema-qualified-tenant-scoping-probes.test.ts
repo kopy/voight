@@ -37,6 +37,7 @@ const policies = [
         tables: ["analytics.event_rollups", "iam.api_clients"],
         scopeColumn: "workspace_id",
         contextKey: "workspaceId",
+        scopeValueType: "string",
     }),
 ];
 

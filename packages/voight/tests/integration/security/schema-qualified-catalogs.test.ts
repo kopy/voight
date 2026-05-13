@@ -46,6 +46,7 @@ describe("schema-qualified catalogs", () => {
                     tables: ["tracking.time_series_stats"],
                     scopeColumn: "tenant_id",
                     contextKey: "tenantId",
+                    scopeValueType: "string",
                 }),
             ],
             policyContext: {
@@ -70,6 +71,7 @@ describe("schema-qualified catalogs", () => {
                     tables: ["time_series_stats"],
                     scopeColumn: "tenant_id",
                     contextKey: "tenantId",
+                    scopeValueType: "string",
                 }),
             ],
             policyContext: {
@@ -104,6 +106,7 @@ describe("schema-qualified catalogs", () => {
                     tables: ["time_series_stats"],
                     scopeColumn: "tenant_id",
                     contextKey: "tenantId",
+                    scopeValueType: "string",
                 }),
             ],
             policyContext: {
@@ -138,6 +141,7 @@ describe("schema-qualified catalogs", () => {
                     tables: ["public_stats"],
                     scopeColumn: "tenant_id",
                     contextKey: "tenantId",
+                    scopeValueType: "string",
                 }),
             ],
             policyContext: {
@@ -171,6 +175,7 @@ describe("schema-qualified catalogs", () => {
                         tables: ["public_stats"],
                         scopeColumn: "tenant_id",
                         contextKey: "tenantId",
+                        scopeValueType: "string",
                     }),
                 ],
                 policyContext: {

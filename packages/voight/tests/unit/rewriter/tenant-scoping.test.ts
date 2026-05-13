@@ -2,7 +2,7 @@ import { describe, expect, test } from "vitest";
 
 import { compile } from "../../../src/compiler";
 import { InMemoryCatalog, createTableSchema } from "../../../src/catalog";
-import { tenantScopingPolicy } from "../../../src/policies";
+import { allowedFunctionsPolicy, tenantScopingPolicy } from "../../../src/policies";
 import { createTestCatalog } from "../../../src/testing";
 
 describe("tenant scoping rewrite", () => {
@@ -10,6 +10,7 @@ describe("tenant scoping rewrite", () => {
         tables: ["timeseries"],
         scopeColumn: "tenant_id",
         contextKey: "tenantId",
+        scopeValueType: "string",
     });
 
     test("rewrites aliased table scans", () => {
@@ -76,11 +77,15 @@ describe("tenant scoping rewrite", () => {
             tables: ["users"],
             scopeColumn: "tenant_id",
             contextKey: "tenantId",
+            scopeValueType: "string",
         });
 
         const result = compile("SELECT DATE_ADD(created_at, INTERVAL tenant_id DAY) FROM users", {
             catalog: createTestCatalog(),
-            policies: [scopedUsersPolicy],
+            policies: [
+                scopedUsersPolicy,
+                allowedFunctionsPolicy({ allowedFunctions: new Set(["date_add"]) }),
+            ],
             policyContext: { tenantId: "tenant-123" },
             debug: true,
         });
@@ -139,6 +144,7 @@ describe("tenant scoping rewrite", () => {
                         tables: ["users", "orders", "internal_projects"],
                         scopeColumn: "tenant_id",
                         contextKey: "tenantId",
+                        scopeValueType: "string",
                     }),
                 ],
                 policyContext: { tenantId: "tenant-123" },
@@ -172,6 +178,7 @@ describe("tenant scoping rewrite", () => {
                         tables: ["users"],
                         scopeColumn: "tenant_id",
                         contextKey: "tenantId",
+                        scopeValueType: "string",
                     }),
                 ],
                 policyContext: { tenantId: "tenant-123" },
@@ -208,11 +215,13 @@ describe("tenant scoping rewrite", () => {
                                 tables: ["users"],
                                 scopeColumn: "tenant_id",
                                 contextKey: "tenantId",
+                                scopeValueType: "string",
                             },
                             {
                                 tables: ["subscriptions"],
                                 scopeColumn: "account_id",
                                 contextKey: "tenantId",
+                                scopeValueType: "string",
                             },
                         ],
                     }),

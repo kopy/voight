@@ -29,12 +29,14 @@ const SUPPORTED_BINARY_OPERATORS = new Set([
 
 const SUPPORTED_UNARY_OPERATORS = new Set(["-", "NOT"]);
 
+export const SUPPORTED_OPERATORS_POLICY_NAME = "supported-operators";
+
 export function supportedOperatorsPolicy(): CompilerPolicy {
     return new SupportedOperatorsPolicy();
 }
 
 class SupportedOperatorsPolicy implements CompilerPolicy {
-    readonly name = "supported-operators";
+    readonly name = SUPPORTED_OPERATORS_POLICY_NAME;
 
     enforce(bound: BoundQuery): readonly Diagnostic[] {
         return collectBoundPolicyDiagnostics(bound, {

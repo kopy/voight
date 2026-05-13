@@ -173,7 +173,7 @@ describe("compile", () => {
         );
     });
 
-    test("injects the configured default limit into every select", () => {
+    test("injects the configured default limit only on the outermost select", () => {
         const result = compile(
             "WITH recent_orders AS (SELECT user_id FROM orders) SELECT id FROM users WHERE id IN (SELECT user_id FROM recent_orders)",
             {
@@ -189,23 +189,46 @@ describe("compile", () => {
         }
 
         expect(result.emitted?.sql).toBe(
-            "WITH `recent_orders` AS (SELECT `orders`.`user_id` FROM `orders` LIMIT 25) SELECT `users`.`id` FROM `users` WHERE `users`.`id` IN (SELECT `recent_orders`.`user_id` FROM `recent_orders` LIMIT 25) LIMIT 25",
+            "WITH `recent_orders` AS (SELECT `orders`.`user_id` FROM `orders`) SELECT `users`.`id` FROM `users` WHERE `users`.`id` IN (SELECT `recent_orders`.`user_id` FROM `recent_orders`) LIMIT 25",
         );
         expect(result.rewrittenAst?.body.limit?.count.kind).toBe("Literal");
         if (result.rewrittenAst?.body.limit?.count.kind === "Literal") {
             expect(result.rewrittenAst.body.limit.count.value).toBe("25");
         }
+        expect(result.rewrittenAst?.with?.ctes[0]?.query.body.limit).toBeUndefined();
+    });
+
+    test("injects the configured default limit into nested selects when recursive", () => {
+        const result = compile(
+            "WITH recent_orders AS (SELECT user_id FROM orders) SELECT id FROM users WHERE id IN (SELECT user_id FROM recent_orders)",
+            {
+                catalog: createTestCatalog(),
+                policies: [maxLimitPolicy({ maxLimit: 100, defaultLimit: 25, recursive: true })],
+                debug: true,
+            },
+        );
+
+        expect(result.ok).toBe(true);
+        if (!result.ok) {
+            return;
+        }
+
+        expect(result.emitted?.sql).toBe(
+            "WITH `recent_orders` AS (SELECT `orders`.`user_id` FROM `orders` LIMIT 25) SELECT `users`.`id` FROM `users` WHERE `users`.`id` IN (SELECT `recent_orders`.`user_id` FROM `recent_orders` LIMIT 25) LIMIT 25",
+        );
         expect(result.rewrittenAst?.with?.ctes[0]?.query.body.limit?.count.kind).toBe("Literal");
     });
 
-    test("does not apply any function policy unless one is configured", () => {
+    test("denies functions unless allowed-functions is configured", () => {
         const result = compile("SELECT SLEEP(10) FROM users", {
             catalog: createTestCatalog(),
             debug: true,
         });
 
-        expect(result.ok).toBe(true);
-        expect(result.emitted?.sql).toBe("SELECT sleep(10) FROM `users`");
+        expect(result.ok).toBe(false);
+        if (!result.ok) {
+            expect(result.diagnostics[0]?.code).toBe(DiagnosticCode.DisallowedFunction);
+        }
     });
 
     test("rejects dangerous functions when allowed-functions is configured explicitly", () => {
@@ -260,6 +283,7 @@ describe("compile", () => {
                     tables: ["timeseries"],
                     scopeColumn: "tenant_id",
                     contextKey: "tenantId",
+                    scopeValueType: "string",
                 }),
             ],
             policyContext: {
@@ -282,6 +306,7 @@ describe("compile", () => {
                     tables: ["timeseries"],
                     scopeColumn: "tenant_id",
                     contextKey: "tenantId",
+                    scopeValueType: "string",
                 }),
             ],
             debug: true,
@@ -300,6 +325,7 @@ describe("compile", () => {
                     tables: ["timeseries"],
                     scopeColumn: "tenant_id",
                     contextKey: "tenantId",
+                    scopeValueType: "string",
                 }),
             ],
         });
@@ -311,17 +337,42 @@ describe("compile", () => {
     test("supports projection-only and current temporal selects", () => {
         const inputs = [
             ["SELECT 1", "SELECT 1"],
-            ["SELECT now()", "SELECT now()"],
-            ["SELECT (CURRENT_TIMESTAMP)", "SELECT (CURRENT_TIMESTAMP)"],
-            ["SELECT (CURRENT_DATE)", "SELECT (CURRENT_DATE)"],
-            ["SELECT (CURRENT_TIME)", "SELECT (CURRENT_TIME)"],
-            ["SELECT CURRENT_TIME", "SELECT CURRENT_TIME"],
             ["SELECT 1;", "SELECT 1"],
         ] as const;
 
         for (const [sql, expected] of inputs) {
             const result = compile(sql, {
                 catalog: createTestCatalog(),
+                debug: true,
+            });
+
+            expect(result.ok).toBe(true);
+            expect(result.emitted?.sql).toBe(expected);
+        }
+    });
+
+    test("supports current temporal expressions when explicitly allowed", () => {
+        const inputs = [
+            ["SELECT now()", "SELECT now()"],
+            ["SELECT (CURRENT_TIMESTAMP)", "SELECT (CURRENT_TIMESTAMP)"],
+            ["SELECT (CURRENT_DATE)", "SELECT (CURRENT_DATE)"],
+            ["SELECT (CURRENT_TIME)", "SELECT (CURRENT_TIME)"],
+            ["SELECT CURRENT_TIME", "SELECT CURRENT_TIME"],
+        ] as const;
+
+        for (const [sql, expected] of inputs) {
+            const result = compile(sql, {
+                catalog: createTestCatalog(),
+                policies: [
+                    allowedFunctionsPolicy({
+                        allowedFunctions: new Set([
+                            "now",
+                            "current_timestamp",
+                            "current_date",
+                            "current_time",
+                        ]),
+                    }),
+                ],
                 debug: true,
             });
 
@@ -353,6 +404,11 @@ describe("compile", () => {
 FROM orders`,
             {
                 catalog: createTestCatalog(),
+                policies: [
+                    allowedFunctionsPolicy({
+                        allowedFunctions: new Set(["round", "coalesce", "nullif"]),
+                    }),
+                ],
                 debug: true,
             },
         );
@@ -379,6 +435,11 @@ FROM orders`,
 FROM orders`;
         const result = compile(sql, {
             catalog: createTestCatalog(),
+            policies: [
+                allowedFunctionsPolicy({
+                    allowedFunctions: new Set(["date_add", "date_sub", "adddate", "subdate"]),
+                }),
+            ],
             debug: true,
         });
 
@@ -431,6 +492,11 @@ LIMIT 100 OFFSET 20`;
 
         const result = compile(sql, {
             catalog: createTestCatalog(),
+            policies: [
+                allowedFunctionsPolicy({
+                    allowedFunctions: new Set(["coalesce", "count", "sum"]),
+                }),
+            ],
             debug: true,
         });
 

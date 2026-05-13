@@ -3,7 +3,7 @@ import { describe, expect, test } from "vitest";
 import { InMemoryCatalog, createTableSchema } from "../../../src/catalog";
 import { compile } from "../../../src/compiler";
 import { DiagnosticCode } from "../../../src/core/diagnostics";
-import { tenantScopingPolicy } from "../../../src/policies";
+import { allowedFunctionsPolicy, tenantScopingPolicy } from "../../../src/policies";
 
 const catalog = new InMemoryCatalog([
     createTableSchema({
@@ -24,6 +24,7 @@ const tenantPolicy = tenantScopingPolicy({
     tables: ["users", "orders"],
     scopeColumn: "tenant_id",
     contextKey: "tenantId",
+    scopeValueType: "string",
 });
 
 function compileScoped(sql: string) {
@@ -139,6 +140,7 @@ describe("FIXED: wildcard projection respects catalog selectability", () => {
     test("hidden-only tables still permit COUNT(*) because no hidden columns are projected", () => {
         const result = compile("SELECT COUNT(*) AS row_count FROM audit_log", {
             catalog,
+            policies: [allowedFunctionsPolicy({ allowedFunctions: new Set(["count"]) })],
             debug: true,
         });
 
